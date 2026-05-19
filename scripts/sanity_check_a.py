@@ -36,13 +36,17 @@ def main() -> None:
     real_features = torch.randn(16, 32).numpy()
     fake_features = torch.randn(16, 32).numpy()
     probs = torch.softmax(torch.randn(16, 10), dim=1).numpy()
-    fid = calculate_fid(real_features, fake_features)
+    try:
+        fid = calculate_fid(real_features, fake_features)
+        fid_text = round(fid, 4)
+    except ImportError as exc:
+        fid_text = f"skipped ({exc})"
     is_mean, is_std = calculate_inception_score(probs, splits=4)
 
     print("device:", device)
     print("discriminator_output_shape:", tuple(output.shape))
     print("loss_stats:", stats)
-    print("dummy_fid:", round(fid, 4))
+    print("dummy_fid:", fid_text)
     print("dummy_is:", round(is_mean, 4), round(is_std, 4))
 
 

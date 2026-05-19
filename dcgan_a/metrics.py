@@ -3,9 +3,18 @@ from collections.abc import Iterable
 import numpy as np
 import torch
 import torch.nn.functional as F
-from scipy import linalg
 from torch import nn
-from torchvision.models import Inception_V3_Weights, inception_v3
+
+try:
+    from torchvision.models import Inception_V3_Weights, inception_v3
+except ImportError:  # pragma: no cover - exercised only in minimal environments
+    Inception_V3_Weights = None
+    inception_v3 = None
+
+try:
+    from scipy import linalg
+except ImportError:  # pragma: no cover - exercised only in minimal environments
+    linalg = None
 
 
 @torch.no_grad()
@@ -19,6 +28,8 @@ def collect_inception_outputs(
     Input images can be normalized to [-1, 1] or [0, 1]. They are resized to
     299x299 and evaluated with ImageNet-pretrained Inception v3.
     """
+    if Inception_V3_Weights is None or inception_v3 is None:
+        raise ImportError("collect_inception_outputs requires torchvision. Install project dependencies from requirements-cu128.txt.")
     device = torch.device(device if torch.cuda.is_available() or str(device) == "cpu" else "cpu")
     weights = Inception_V3_Weights.DEFAULT
     model = inception_v3(weights=weights, transform_input=False).to(device)
@@ -47,6 +58,8 @@ def collect_inception_outputs(
 
 def calculate_fid(real_features: np.ndarray, fake_features: np.ndarray, eps: float = 1e-6) -> float:
     """Compute Fréchet Inception Distance from two feature matrices."""
+    if linalg is None:
+        raise ImportError("calculate_fid requires scipy. Install project dependencies from requirements-cu128.txt.")
     mu_real = np.mean(real_features, axis=0)
     mu_fake = np.mean(fake_features, axis=0)
     sigma_real = np.cov(real_features, rowvar=False)

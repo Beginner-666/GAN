@@ -24,7 +24,10 @@ def main() -> None:
     root = Path(args.data_root)
     root.mkdir(parents=True, exist_ok=True)
 
-    print(f"Downloading/loading {args.dataset} under: {root.resolve()}")
+    print(f"dataset={args.dataset}", flush=True)
+    print(f"data_root={root.resolve()}", flush=True)
+    print("status=downloading_or_loading", flush=True)
+    print("note=torchvision will print the download progress when files are not present", flush=True)
     dataset = load_face_dataset(
         root=root,
         name=args.dataset,
@@ -32,6 +35,7 @@ def main() -> None:
         train=train,
         download=True,
     )
+    print("status=verifying", flush=True)
     image, target = dataset[0]
     print(f"dataset={args.dataset}")
     print(f"num_samples={len(dataset)}")

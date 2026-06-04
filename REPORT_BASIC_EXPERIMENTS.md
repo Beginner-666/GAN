@@ -382,3 +382,175 @@ largerg_bs64_lr2e4_g128_d64：
 - 潜变量线性插值图。
 - 调参阶段不同配置的生成样本对比。
 
+## 12. Bonus 实验：轻量化 StyleGAN 对比
+
+为了完成 Bonus 中“对比改进 GAN 模型与基础模型性能差异”的要求，我们在 DCGAN baseline 之外实现并训练了一个 64x64 轻量化 StyleGAN 变体。该模型不是 NVIDIA 官方完整 StyleGAN 复现，而是保留了 StyleGAN 的核心思想：
+
+- 使用 mapping network 将随机噪声 `z` 映射到风格空间 `w`。
+- 使用 learned constant 作为生成起点。
+- 在生成器卷积块中使用 AdaIN 进行风格调制。
+- 使用 noise injection 引入局部随机细节。
+- 支持在 `w` 空间进行潜变量插值。
+- 使用 non-saturating logistic loss 和 R1 regularization 训练判别器。
+
+因此，这部分实验主要用于展示 StyleGAN 相比 DCGAN 的生成机制改进和潜空间表达能力。
+
+### 12.1 StyleGAN 自动调参设置
+
+StyleGAN 调参使用脚本：
+
+```bash
+python scripts/auto_tune_stylegan.py \
+  --dataset imagefolder \
+  --data-root data/celeba_imagefolder \
+  --device cuda \
+  --num-workers 8 \
+  --tune-epochs 50 \
+  --final-epochs 100 \
+  --eval-images 4096 \
+  --eval-batch-size 32 \
+  --sample-every 5 \
+  --checkpoint-every 5 \
+  --output-root outputs/stylegan_autotune \
+  --checkpoint-root checkpoints/stylegan_autotune \
+  --log-root logs/stylegan_autotune \
+  --run-final
+```
+
+该脚本会依次完成：训练候选配置、计算 FID/IS、生成插值图、写入 `summary.csv` / `summary.json`、根据最低 FID 选择 winner，并使用 winner 参数进行最终训练。
+
+调参候选配置如下，所有候选均使用 `generator_channels=128`、`discriminator_channels=64`、`style_dim=128`、`mapping_layers=4`，评估均使用 4096 张图像。
+
+| 实验名称 | Epoch | Batch Size | 学习率 | beta1 | beta2 | R1 gamma | R1 every | FID ↓ | IS Mean ↑ | IS Std |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| bs32_lr2e4_r1_10 | 50 | 32 | 0.0002 | 0.0 | 0.99 | 10.0 | 16 | 29.257190 | 2.364138 | 0.070151 |
+| bs32_lr1e4_r1_10 | 50 | 32 | 0.0001 | 0.0 | 0.99 | 10.0 | 16 | 45.198105 | 2.477224 | 0.064988 |
+| bs64_lr2e4_r1_10 | 50 | 64 | 0.0002 | 0.0 | 0.99 | 10.0 | 16 | 35.587283 | 2.409524 | 0.073632 |
+| bs32_lr2e4_r1_5 | 50 | 32 | 0.0002 | 0.0 | 0.99 | 5.0 | 16 | 28.921048 | 2.383427 | 0.075046 |
+
+调参观察：
+
+- 在本组实验中，`batch_size=32, lr=0.0002, r1_gamma=5` 的 FID 最低，作为 StyleGAN 最终训练配置。
+- `lr=0.0001` 的 IS 最高，但 FID 明显变差，说明它生成的样本可能有一定多样性，但整体分布与真实 CelebA 的距离更大。
+- 将 batch size 从 32 增大到 64 没有带来 FID 改善。
+- 将 R1 gamma 从 10 降到 5 后，FID 从 `29.257190` 降到 `28.921048`，略有提升。
+
+StyleGAN 调参阶段样本：
+
+bs32_lr2e4_r1_10：
+
+![](Image/stylegan_tune_bs32_lr2e4_r1_10_latest.png)
+
+bs32_lr1e4_r1_10：
+
+![](Image/stylegan_tune_bs32_lr1e4_r1_10_latest.png)
+
+bs64_lr2e4_r1_10：
+
+![](Image/stylegan_tune_bs64_lr2e4_r1_10_latest.png)
+
+bs32_lr2e4_r1_5：
+
+![](Image/stylegan_tune_bs32_lr2e4_r1_5_latest.png)
+
+### 12.2 StyleGAN 最终训练结果
+
+根据调参结果，最终 StyleGAN 配置为：
+
+```text
+batch_size = 32
+lr = 0.0002
+beta1 = 0.0
+beta2 = 0.99
+generator_channels = 128
+discriminator_channels = 64
+style_dim = 128
+mapping_layers = 4
+r1_gamma = 5.0
+r1_every = 16
+epochs = 100
+```
+
+最终模型使用 4096 张图像进行评估，结果如下：
+
+| 模型 | Epoch | Batch Size | 学习率 | R1 gamma | 评估图像数 | FID ↓ | IS Mean ↑ | IS Std |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| StyleGAN-light final_bs32_lr2e4_r1_5_e100 | 100 | 32 | 0.0002 | 5.0 | 4096 | 23.114239 | 2.400094 | 0.062812 |
+
+最终评估输出：
+
+```text
+num_images=4096
+fid=23.114239
+inception_score_mean=2.400094
+inception_score_std=0.062812
+```
+
+最终生成样本：
+
+![](Image/stylegan_final_samples_latest.png)
+
+StyleGAN loss 曲线：
+
+![](Image/stylegan_final_loss.svg)
+
+StyleGAN 训练过程中不同 epoch 的生成样本：
+
+Epoch 50：
+
+![](Image/stylegan_final_samples_epoch_0050.png)
+
+Epoch 100：
+
+![](Image/stylegan_final_samples_epoch_0100.png)
+
+StyleGAN `w` 空间插值结果：
+
+![](Image/stylegan_final_interpolation.png)
+
+### 12.3 DCGAN 与 StyleGAN 对比
+
+最终 DCGAN baseline 与 StyleGAN-light 的指标对比如下：
+
+| 模型 | Epoch | 主要配置 | FID ↓ | IS Mean ↑ | IS Std |
+|---|---:|---|---:|---:|---:|
+| DCGAN | 50 | batch_size=32, lr=0.0002, G=128, D=64 | 16.393850 | 2.093219 | 0.070783 |
+| StyleGAN-light | 100 | batch_size=32, lr=0.0002, R1 gamma=5 | 23.114239 | 2.400094 | 0.062812 |
+
+对比观察：
+
+- 从 FID 看，当前 StyleGAN-light 的 `23.114239` 仍高于 DCGAN 的 `16.393850`，说明在本实验设置下，StyleGAN-light 的整体分布拟合效果还没有超过充分调优的 DCGAN baseline。
+- 从 Inception Score 看，StyleGAN-light 的 `2.400094` 高于 DCGAN 的 `2.093219`，说明 StyleGAN-light 生成样本在 Inception 分类空间中具有更高的多样性或可识别性。
+- StyleGAN-light 支持 `w` 空间插值，相比 DCGAN 直接在 `z` 空间插值，具有更明确的潜空间表达和风格控制意义。
+- FID 未超过 DCGAN 的原因可能包括：本实现是轻量化 StyleGAN 变体，未包含 EMA generator、style mixing、truncation trick、path length regularization 等完整 StyleGAN 训练技巧；同时本任务分辨率为 64x64，DCGAN 在该低分辨率人脸生成任务上本身就是较强 baseline。
+
+因此，本实验中 DCGAN 在 FID 指标上更好；StyleGAN-light 则在 Inception Score、潜空间结构和生成机制可控性方面体现出改进模型的优势。
+
+### 12.4 StyleGAN 相关文件
+
+StyleGAN 结果文件位置：
+
+```text
+outputs/stylegan_autotune/summary.csv
+outputs/stylegan_autotune/summary.json
+outputs/stylegan_autotune/winner.json
+outputs/stylegan_autotune/final_result.json
+outputs/stylegan_autotune/final_bs32_lr2e4_r1_5_e100/eval_fid_is_4096.txt
+outputs/stylegan_autotune/final_bs32_lr2e4_r1_5_e100/samples/latest.png
+outputs/stylegan_autotune/final_bs32_lr2e4_r1_5_e100/loss.svg
+outputs/stylegan_autotune/final_bs32_lr2e4_r1_5_e100/interpolation.png
+```
+
+已整理到 `Image/` 目录的 StyleGAN 图片：
+
+```text
+Image/stylegan_final_samples_latest.png
+Image/stylegan_final_loss.svg
+Image/stylegan_final_interpolation.png
+Image/stylegan_final_samples_epoch_0050.png
+Image/stylegan_final_samples_epoch_0100.png
+Image/stylegan_tune_bs32_lr2e4_r1_10_latest.png
+Image/stylegan_tune_bs32_lr1e4_r1_10_latest.png
+Image/stylegan_tune_bs64_lr2e4_r1_10_latest.png
+Image/stylegan_tune_bs32_lr2e4_r1_5_latest.png
+```

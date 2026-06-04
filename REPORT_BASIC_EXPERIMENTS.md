@@ -554,3 +554,104 @@ Image/stylegan_tune_bs32_lr1e4_r1_10_latest.png
 Image/stylegan_tune_bs64_lr2e4_r1_10_latest.png
 Image/stylegan_tune_bs32_lr2e4_r1_5_latest.png
 ```
+
+## 13. Bonus 实验：模式崩溃分析
+
+为了分析 GAN 训练中的模式崩溃问题，我们额外构造了一个故意不平衡的 DCGAN 训练配置。该实验的目的不是提升生成质量，而是通过极端设置让生成器退化，从而观察模式崩溃现象。
+
+### 13.1 强制模式崩溃实验设置
+
+实验命令：
+
+```bash
+python -u scripts/train_dcgan_mode_collapse.py \
+  --dataset imagefolder \
+  --data-root data/celeba_imagefolder \
+  --epochs 10 \
+  --batch-size 32 \
+  --num-workers 8 \
+  --noise-dim 8 \
+  --lr-g 0.00001 \
+  --lr-d 0.001 \
+  --feature-maps-g 32 \
+  --feature-maps-d 128 \
+  --d-steps 5 \
+  --output-dir outputs/dcgan_mode_collapse_forced \
+  --checkpoint-dir checkpoints/dcgan_mode_collapse_forced \
+  --sample-every 1 \
+  --checkpoint-every 5 \
+  --device cuda \
+  2>&1 | tee logs/dcgan_mode_collapse_forced.log
+```
+
+该配置故意制造训练不平衡：
+
+- 将潜变量维度降到 `noise_dim=8`，压缩生成器可表达的随机变化。
+- 将生成器容量设为 `G=32`，明显弱于最终 DCGAN 的 `G=128`。
+- 将判别器容量设为 `D=128`，强于最终 DCGAN 的 `D=64`。
+- 设置 `lr_g=0.00001`、`lr_d=0.001`，让判别器学习速度远高于生成器。
+- 设置 `d_steps=5`，即每更新一次生成器，先更新五次判别器。
+
+### 13.2 模式崩溃现象
+
+训练到后期时，生成图像几乎退化为灰色常数图像。由于生成图像保存时会从 `[-1, 1]` 反归一化到 `[0, 1]`，如果生成器输出接近 `0`，保存出来就是接近 `0.5` 的灰色。因此，全灰图说明生成器没有学到有效的人脸分布，而是退化为接近常数的输出。
+
+第 7 个 epoch 的生成样本：
+
+![](Image/mode_collapse_forced_epoch_0007.png)
+
+最终生成样本：
+
+![](Image/mode_collapse_forced_latest.png)
+
+模式崩溃实验 loss 曲线：
+
+![](Image/mode_collapse_forced_loss.svg)
+
+### 13.3 指标分析
+
+强制模式崩溃实验最后一个 epoch 的统计结果如下：
+
+| 实验 | Epoch | d_loss mean | g_loss mean | d_real_prob mean | d_fake_prob mean |
+|---|---:|---:|---:|---:|---:|
+| 正常 DCGAN final | 50 | 0.191491 | 6.073631 | 0.941863 | 0.058060 |
+| 强制模式崩溃 DCGAN | 10 | 0.037463 | 16.444706 | 0.999609 | 0.001595 |
+
+从指标上看，强制模式崩溃实验中：
+
+- `d_real_prob` 接近 `1.0`，说明判别器几乎总能把真实图像判断为真。
+- `d_fake_prob` 接近 `0.0`，说明判别器几乎总能把生成图像判断为假。
+- `g_loss` 达到 `16.444706`，明显高于正常 DCGAN 最终阶段的 `6.073631`。
+- `d_loss` 降到 `0.037463`，说明判别器已经明显占优。
+
+训练日志末尾也可以看到类似现象：
+
+```text
+epoch=10/10 batch=6300/6331 d_loss=0.0000 g_loss=16.6961 real=1.0000 fake=0.0000
+```
+
+这说明生成器已经很难从判别器获得有效梯度，最终退化为输出几乎相同的灰色图像。该现象可以视为模式崩溃的极端形式：生成分布坍缩到单一模式，无法生成多样化的人脸样本。
+
+### 13.4 与正常训练配置的对比
+
+正常 DCGAN 最终配置为 `G=128, D=64, lr=0.0002, noise_dim=128`，生成样本能够保持较好的人脸结构和一定多样性；而强制模式崩溃配置中，生成器弱、判别器强、判别器训练步数更多，导致判别器迅速压制生成器，生成器最终只输出接近常数的灰色图。
+
+该实验说明，GAN 训练需要保持生成器和判别器之间的动态平衡。如果判别器过强或生成器学习过慢，生成器可能无法学习真实数据分布，进而出现模式崩溃或生成退化。StyleGAN-light 中使用的 mapping network、noise injection 和 R1 regularization 等机制，也可以从模型结构和训练正则化角度帮助缓解生成不稳定问题。
+
+### 13.5 模式崩溃相关文件
+
+```text
+outputs/dcgan_mode_collapse_forced/metrics.csv
+outputs/dcgan_mode_collapse_forced/loss.svg
+outputs/dcgan_mode_collapse_forced/samples/epoch_0007.png
+outputs/dcgan_mode_collapse_forced/samples/latest.png
+logs/dcgan_mode_collapse_forced.log
+```
+
+已整理到 `Image/` 目录的图片：
+
+```text
+Image/mode_collapse_forced_epoch_0007.png
+Image/mode_collapse_forced_latest.png
+Image/mode_collapse_forced_loss.svg
+```

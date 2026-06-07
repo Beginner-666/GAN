@@ -6,20 +6,20 @@
 
 推荐使用 conda：
 
-```bash
+```powershell
 conda env create -f environment.yml
 conda activate dcgan-face
 ```
 
 当前 `environment.yml` 按 Python 3.12 + CUDA 12.8 配置，PyTorch 使用官方 cu128 wheel。若你已经有 Python 3.12 环境，也可以直接安装：
 
-```bash
+```powershell
 pip install -r requirements-cu128.txt
 ```
 
 验证 CUDA：
 
-```bash
+```powershell
 python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.version.cuda); print(torch.cuda.get_device_name(0))"
 ```
 
@@ -41,13 +41,13 @@ data/
 
 可以先单独下载数据，不启动训练：
 
-```bash
+```powershell
 python scripts/download_data.py --dataset lfw --data-root data
 ```
 
 CelebA 也保留了自动下载入口：
 
-```bash
+```powershell
 python scripts/download_data.py --dataset celeba --data-root data
 ```
 
@@ -55,7 +55,7 @@ python scripts/download_data.py --dataset celeba --data-root data
 
 ## 快速自检
 
-```bash
+```powershell
 python scripts/sanity_check_a.py
 ```
 
@@ -63,7 +63,7 @@ python scripts/sanity_check_a.py
 
 默认优先使用 GPU；没有 CUDA 时会自动回退 CPU。也可以显式指定：
 
-```bash
+```powershell
 python scripts/sanity_check_a.py --device cpu
 ```
 
@@ -91,6 +91,6 @@ stats = train_discriminator_step(
 
 也提供了一个只训练判别器接口的最小例子：
 
-```bash
+```powershell
 python scripts/train_discriminator_example.py --data-root data/custom_faces --dataset imagefolder --steps 100
 ```

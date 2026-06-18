@@ -2,12 +2,33 @@ from pathlib import Path
 from typing import Literal
 
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader, Dataset, random_split
 from torchvision import datasets, transforms
 
 from .config import DCGANConfig
 
 DatasetName = Literal["imagefolder", "lfw", "celeba"]
+
+
+class FlatImageDataset(Dataset):
+    def __init__(self, image_dir: str | Path, transform: transforms.Compose | None = None) -> None:
+        self.image_dir = Path(image_dir)
+        self.transform = transform
+        patterns = ("*.jpg", "*.jpeg", "*.png")
+        self.paths = sorted(path for pattern in patterns for path in self.image_dir.glob(pattern))
+        if not self.paths:
+            raise RuntimeError(f"No images found under {self.image_dir}")
+
+    def __len__(self) -> int:
+        return len(self.paths)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        with Image.open(self.paths[index]) as image:
+            image = image.convert("RGB")
+            if self.transform is not None:
+                image = self.transform(image)
+        return image, 0
 
 
 def build_face_transforms(image_size: int = 64, train: bool = True) -> transforms.Compose:
@@ -48,6 +69,9 @@ def load_face_dataset(
     if name == "lfw":
         return datasets.LFWPeople(root=str(root), split="train", transform=transform, download=download)
     if name == "celeba":
+        image_dir = root / "celeba" / "img_align_celeba"
+        if image_dir.is_dir() and any(image_dir.glob("*.jpg")):
+            return FlatImageDataset(image_dir, transform=transform)
         split = "train" if train else "test"
         return datasets.CelebA(root=str(root), split=split, target_type="attr", transform=transform, download=download)
     raise ValueError(f"Unsupported dataset: {name}")

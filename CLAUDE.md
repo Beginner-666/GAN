@@ -49,12 +49,16 @@ Minimal import and shape checks:
 ```powershell
 python scripts\sanity_check_a.py --device cpu
 python scripts\sanity_check_b.py --device cpu
+python scripts\sanity_check_stylegan.py --device cpu
+python scripts\sanity_check_stylegan2.py --device cpu
 ```
 
 Short training smoke test with a local ImageFolder dataset:
 
 ```powershell
 python scripts\train_dcgan.py --dataset imagefolder --data-root data\custom_faces --epochs 1 --batch-size 8 --num-workers 0 --device cpu
+python scripts\train_stylegan.py --dataset imagefolder --data-root data\custom_faces --epochs 1 --batch-size 4 --num-workers 0 --device cpu --max-batches 1
+python scripts\train_stylegan2.py --dataset imagefolder --data-root data\custom_faces --epochs 1 --batch-size 4 --num-workers 0 --device cpu --max-batches 1
 ```
 
 LFW quick run after downloading data:
@@ -62,4 +66,13 @@ LFW quick run after downloading data:
 ```powershell
 python scripts\download_data.py --dataset lfw --data-root data
 python scripts\train_dcgan.py --dataset lfw --data-root data --epochs 5 --batch-size 64 --num-workers 0
+python scripts\train_stylegan.py --dataset lfw --data-root data --epochs 1 --batch-size 64 --num-workers 0 --max-batches 10
+python scripts\train_stylegan2.py --dataset lfw --data-root data --epochs 1 --batch-size 64 --num-workers 0 --max-batches 10
+```
+
+Interpolation test after training:
+
+```powershell
+python scripts\interpolate_stylegan.py --checkpoint checkpoints\stylegan\stylegan_latest.pt --space w --truncation-psi 0.7
+python scripts\interpolate_stylegan2.py --checkpoint checkpoints\stylegan2\stylegan2_latest.pt --space w --truncation-psi 0.7
 ```

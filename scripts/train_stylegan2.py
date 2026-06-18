@@ -17,17 +17,17 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dcgan_a import DCGANConfig, resolve_device
 from dcgan_b.artifacts import append_metrics_csv, denormalize_images, load_checkpoint, save_checkpoint, save_image_grid, write_loss_svg
-from dcgan_b.stylegan import StyleGANDiscriminator64, StyleGANGenerator64, build_stylegan_optimizers, copy_stylegan_for_ema, update_ema
+from dcgan_b.stylegan2 import StyleGAN2Discriminator64, StyleGAN2Generator64, build_stylegan2_optimizers, copy_stylegan2_for_ema, update_ema
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train a 64x64 StyleGAN face generator.")
+    parser = argparse.ArgumentParser(description="Train a 64x64 StyleGAN2 face generator.")
     parser.add_argument("--data-root", default="data")
-    parser.add_argument("--dataset", default="lfw", choices=["imagefolder", "lfw", "celeba"])
+    parser.add_argument("--dataset", default="celeba", choices=["imagefolder", "lfw", "celeba"])
     parser.add_argument("--download", action="store_true")
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--beta1", type=float, default=0.0)
     parser.add_argument("--beta2", type=float, default=0.99)
@@ -38,20 +38,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--style-mixing-prob", type=float, default=0.9)
     parser.add_argument("--ema-decay", type=float, default=0.995)
     parser.add_argument("--r1-gamma", type=float, default=10.0)
-    parser.add_argument("--r1-every", type=int, default=16, help="Apply R1 regularization every N discriminator steps; 0 disables it.")
-    parser.add_argument("--pl-weight", type=float, default=0.0)
-    parser.add_argument("--pl-every", type=int, default=4, help="Apply path length regularization every N generator steps; 0 disables it.")
-    parser.add_argument("--truncation-psi", type=float, default=1.0)
-    parser.add_argument("--truncation-cutoff", type=int, default=0, help="0 applies truncation to all style layers.")
+    parser.add_argument("--r1-every", type=int, default=16)
+    parser.add_argument("--pl-weight", type=float, default=2.0)
+    parser.add_argument("--pl-every", type=int, default=4)
+    parser.add_argument("--truncation-psi", type=float, default=0.7)
+    parser.add_argument("--truncation-cutoff", type=int, default=0)
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
-    parser.add_argument("--output-dir", default="outputs/stylegan")
-    parser.add_argument("--checkpoint-dir", default="checkpoints/stylegan")
+    parser.add_argument("--output-dir", default="outputs/stylegan2")
+    parser.add_argument("--checkpoint-dir", default="checkpoints/stylegan2")
     parser.add_argument("--resume", default="")
     parser.add_argument("--sample-every", type=int, default=1)
     parser.add_argument("--checkpoint-every", type=int, default=1)
     parser.add_argument("--log-interval", type=int, default=50)
     parser.add_argument("--fixed-samples", type=int, default=64)
-    parser.add_argument("--max-batches", type=int, default=0, help="Optional limit for CPU smoke tests.")
+    parser.add_argument("--max-batches", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -99,7 +99,7 @@ def path_length_regularization(
 
 @torch.no_grad()
 def save_ema_grid(
-    generator: StyleGANGenerator64,
+    generator: StyleGAN2Generator64,
     fixed_noise: torch.Tensor,
     output_path: Path,
     nrow: int,
@@ -141,29 +141,16 @@ def main() -> None:
     if len(dataloader) == 0:
         raise RuntimeError("Dataloader is empty. Reduce batch size or check dataset path.")
 
-    generator = StyleGANGenerator64(
-        config,
-        style_dim=args.style_dim,
-        base_channels=args.generator_channels,
-        mapping_layers=args.mapping_layers,
-    ).to(device)
-    discriminator = StyleGANDiscriminator64(config, base_channels=args.discriminator_channels).to(device)
-    generator_ema = copy_stylegan_for_ema(generator).to(device)
-    optimizer_g, optimizer_d = build_stylegan_optimizers(generator, discriminator, args.lr, args.beta1, args.beta2)
+    generator = StyleGAN2Generator64(config, style_dim=args.style_dim, base_channels=args.generator_channels, mapping_layers=args.mapping_layers).to(device)
+    discriminator = StyleGAN2Discriminator64(config, base_channels=args.discriminator_channels).to(device)
+    generator_ema = copy_stylegan2_for_ema(generator).to(device)
+    optimizer_g, optimizer_d = build_stylegan2_optimizers(generator, discriminator, args.lr, args.beta1, args.beta2)
 
     fixed_count = max(1, args.fixed_samples)
     fixed_noise = torch.randn(fixed_count, config.noise_dim, 1, 1, device=device)
     start_epoch = 1
     if args.resume:
-        loaded_epoch, loaded_noise = load_checkpoint(
-            args.resume,
-            generator,
-            discriminator,
-            optimizer_g,
-            optimizer_d,
-            device,
-            generator_ema=generator_ema,
-        )
+        loaded_epoch, loaded_noise = load_checkpoint(args.resume, generator, discriminator, optimizer_g, optimizer_d, device, generator_ema=generator_ema)
         start_epoch = loaded_epoch + 1
         if loaded_noise is not None and loaded_noise.shape[1:] == fixed_noise.shape[1:]:
             fixed_noise = loaded_noise[:fixed_count]
@@ -176,7 +163,7 @@ def main() -> None:
     global_step = 0
     mean_path_length = torch.zeros((), device=device)
 
-    print(f"device={device} dataset={args.dataset} samples={len(dataset)} batches={len(dataloader)} model=stylegan64")
+    print(f"device={device} dataset={args.dataset} samples={len(dataset)} batches={len(dataloader)} model=stylegan2_64")
     for epoch in range(start_epoch, args.epochs + 1):
         generator.train()
         discriminator.train()
@@ -246,41 +233,14 @@ def main() -> None:
                 )
 
         if epoch % args.sample_every == 0:
-            save_ema_grid(
-                generator_ema,
-                fixed_noise,
-                samples_dir / f"epoch_{epoch:04d}_ema.png",
-                nrow=8,
-                truncation_psi=args.truncation_psi,
-                truncation_cutoff=truncation_cutoff,
-            )
+            save_ema_grid(generator_ema, fixed_noise, samples_dir / f"epoch_{epoch:04d}_ema.png", 8, args.truncation_psi, truncation_cutoff)
             write_loss_svg(metrics_csv, loss_svg)
 
         if epoch % args.checkpoint_every == 0:
-            save_checkpoint(
-                checkpoint_dir / f"stylegan_epoch_{epoch:04d}.pt",
-                epoch,
-                generator,
-                discriminator,
-                optimizer_g,
-                optimizer_d,
-                config,
-                fixed_noise,
-                generator_ema=generator_ema,
-            )
+            save_checkpoint(checkpoint_dir / f"stylegan2_epoch_{epoch:04d}.pt", epoch, generator, discriminator, optimizer_g, optimizer_d, config, fixed_noise, generator_ema=generator_ema)
 
-    save_checkpoint(
-        checkpoint_dir / "stylegan_latest.pt",
-        args.epochs,
-        generator,
-        discriminator,
-        optimizer_g,
-        optimizer_d,
-        config,
-        fixed_noise,
-        generator_ema=generator_ema,
-    )
-    save_ema_grid(generator_ema, fixed_noise, samples_dir / "latest_ema.png", nrow=8, truncation_psi=args.truncation_psi, truncation_cutoff=truncation_cutoff)
+    save_checkpoint(checkpoint_dir / "stylegan2_latest.pt", args.epochs, generator, discriminator, optimizer_g, optimizer_d, config, fixed_noise, generator_ema=generator_ema)
+    save_ema_grid(generator_ema, fixed_noise, samples_dir / "latest_ema.png", 8, args.truncation_psi, truncation_cutoff)
     write_loss_svg(metrics_csv, loss_svg)
     print(f"done checkpoints={checkpoint_dir} outputs={output_dir}")
 

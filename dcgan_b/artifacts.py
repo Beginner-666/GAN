@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import math
 import struct
@@ -106,21 +108,22 @@ def save_checkpoint(
     optimizer_d: torch.optim.Optimizer,
     config: Any,
     fixed_noise: torch.Tensor,
+    generator_ema: nn.Module | None = None,
 ) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {
-            "epoch": epoch,
-            "generator": generator.state_dict(),
-            "discriminator": discriminator.state_dict(),
-            "optimizer_g": optimizer_g.state_dict(),
-            "optimizer_d": optimizer_d.state_dict(),
-            "config": getattr(config, "__dict__", config),
-            "fixed_noise": fixed_noise.detach().cpu(),
-        },
-        path,
-    )
+    checkpoint = {
+        "epoch": epoch,
+        "generator": generator.state_dict(),
+        "discriminator": discriminator.state_dict(),
+        "optimizer_g": optimizer_g.state_dict(),
+        "optimizer_d": optimizer_d.state_dict(),
+        "config": getattr(config, "__dict__", config),
+        "fixed_noise": fixed_noise.detach().cpu(),
+    }
+    if generator_ema is not None:
+        checkpoint["generator_ema"] = generator_ema.state_dict()
+    torch.save(checkpoint, path)
 
 
 def load_checkpoint(
@@ -130,9 +133,15 @@ def load_checkpoint(
     optimizer_g: torch.optim.Optimizer | None = None,
     optimizer_d: torch.optim.Optimizer | None = None,
     device: torch.device | str = "cpu",
+    use_ema: bool = False,
+    generator_ema: nn.Module | None = None,
 ) -> tuple[int, torch.Tensor | None]:
     checkpoint = torch.load(path, map_location=device)
-    generator.load_state_dict(checkpoint["generator"])
+    generator_key = "generator_ema" if use_ema and "generator_ema" in checkpoint else "generator"
+    generator.load_state_dict(checkpoint[generator_key])
+    if generator_ema is not None:
+        ema_key = "generator_ema" if "generator_ema" in checkpoint else "generator"
+        generator_ema.load_state_dict(checkpoint[ema_key])
     if discriminator is not None and "discriminator" in checkpoint:
         discriminator.load_state_dict(checkpoint["discriminator"])
     if optimizer_g is not None and "optimizer_g" in checkpoint:

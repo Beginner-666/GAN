@@ -9,6 +9,8 @@ def discriminator_bce_loss(
     real_images: torch.Tensor,
     fake_images: torch.Tensor,
     criterion: nn.Module | None = None,
+    real_label: float = 1.0,
+    fake_label: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Compute the discriminator BCE loss for one DCGAN step."""
     if criterion is None:
@@ -16,8 +18,8 @@ def discriminator_bce_loss(
 
     real_pred = discriminator(real_images)
     fake_pred = discriminator(fake_images.detach())
-    real_targets = torch.ones_like(real_pred)
-    fake_targets = torch.zeros_like(fake_pred)
+    real_targets = torch.full_like(real_pred, real_label)
+    fake_targets = torch.full_like(fake_pred, fake_label)
 
     real_loss = criterion(real_pred, real_targets)
     fake_loss = criterion(fake_pred, fake_targets)
@@ -43,6 +45,8 @@ def train_discriminator_step(
     fake_images: torch.Tensor,
     device: torch.device | str,
     criterion: nn.Module | None = None,
+    real_label: float = 1.0,
+    fake_label: float = 0.0,
 ) -> dict[str, float]:
     """Run one production discriminator update on the selected device."""
     discriminator.train()
@@ -50,7 +54,14 @@ def train_discriminator_step(
     fake_images = fake_images.to(device, non_blocking=True)
 
     optimizer.zero_grad(set_to_none=True)
-    loss, stats = discriminator_bce_loss(discriminator, real_images, fake_images, criterion)
+    loss, stats = discriminator_bce_loss(
+        discriminator,
+        real_images,
+        fake_images,
+        criterion,
+        real_label=real_label,
+        fake_label=fake_label,
+    )
     loss.backward()
     optimizer.step()
     return stats

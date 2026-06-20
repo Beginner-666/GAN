@@ -39,8 +39,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-every", type=int, default=1)
     parser.add_argument("--log-interval", type=int, default=50)
     parser.add_argument("--fixed-samples", type=int, default=64)
+    parser.add_argument("--real-label", type=float, default=1.0, help="Target label for real images; use 0.9 for one-sided label smoothing.")
+    parser.add_argument("--fake-label", type=float, default=0.0, help="Target label for fake images during discriminator training.")
+    parser.add_argument("--instance-noise-std", type=float, default=0.0, help="Initial std for Gaussian instance noise added to real/fake discriminator inputs.")
+    parser.add_argument("--instance-noise-decay-epochs", type=int, default=0, help="Linearly decay instance noise to zero over this many epochs; 0 keeps it constant.")
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
+
+
+def current_instance_noise_std(epoch: int, initial_std: float, decay_epochs: int) -> float:
+    if initial_std <= 0.0:
+        return 0.0
+    if decay_epochs <= 0:
+        return initial_std
+    progress = min(max(epoch - 1, 0), decay_epochs) / decay_epochs
+    return initial_std * (1.0 - progress)
+
+
+def add_instance_noise(images: torch.Tensor, std: float) -> torch.Tensor:
+    if std <= 0.0:
+        return images
+    return (images + torch.randn_like(images) * std).clamp(-1.0, 1.0)
 
 
 def main() -> None:
@@ -112,17 +131,20 @@ def main() -> None:
             z = torch.randn(batch_size, config.noise_dim, 1, 1, device=device)
             fake_images = generator(z)
 
+            noise_std = current_instance_noise_std(epoch, args.instance_noise_std, args.instance_noise_decay_epochs)
             d_stats = train_discriminator_step(
                 discriminator=discriminator,
                 optimizer=optimizer_d,
-                real_images=real_images,
-                fake_images=fake_images,
+                real_images=add_instance_noise(real_images, noise_std),
+                fake_images=add_instance_noise(fake_images, noise_std),
                 device=device,
                 criterion=criterion,
+                real_label=args.real_label,
+                fake_label=args.fake_label,
             )
 
             optimizer_g.zero_grad(set_to_none=True)
-            pred_fake = discriminator(fake_images)
+            pred_fake = discriminator(add_instance_noise(fake_images, noise_std))
             g_targets = torch.ones_like(pred_fake)
             g_loss = criterion(pred_fake, g_targets)
             g_loss.backward()
@@ -139,6 +161,9 @@ def main() -> None:
                 "d_loss_fake": d_stats["d_loss_fake"],
                 "d_real_prob": d_stats["d_real_prob"],
                 "d_fake_prob": d_stats["d_fake_prob"],
+                "real_label": args.real_label,
+                "fake_label": args.fake_label,
+                "instance_noise_std": noise_std,
             }
             append_metrics_csv(metrics_csv, row)
 

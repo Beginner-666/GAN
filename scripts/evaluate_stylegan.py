@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import os
 import sys
@@ -29,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--style-dim", type=int, default=128)
     parser.add_argument("--mapping-layers", type=int, default=4)
     parser.add_argument("--generator-channels", type=int, default=128)
+    parser.add_argument("--no-ema", action="store_true")
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     return parser.parse_args()
 
@@ -52,7 +55,7 @@ def main() -> None:
         base_channels=args.generator_channels,
         mapping_layers=args.mapping_layers,
     ).to(device)
-    load_checkpoint(args.checkpoint, generator, device=device)
+    load_checkpoint(args.checkpoint, generator, device=device, use_ema=not args.no_ema)
     generator.eval()
 
     real_batches: list[torch.Tensor] = []

@@ -12,10 +12,10 @@
 | DCGAN 长训无缓解 | 400 | 2048 | 31.052 | 2.241 | FID 上升，多样性下降 |
 | DCGAN 缓解组 | 160 | 2048 | 15.589 | 2.303 | label smoothing + instance noise 早期有效 |
 | StyleGAN-like | 100 | 4096 | 23.114 | 2.400 | 引入 mapping、AdaIN、noise injection 与 R1 |
-| StyleGAN2 | 50 | - | - | - | 完成结构实现与 W 空间插值验证 |
+| StyleGAN2 | 50 | 4096 | 24.926 | 1.845 | 引入 modulated conv、demodulation、style mixing 与 PL 正则 |
 | 强制模式崩溃 | 10 | 2048 | 336.690 | 1.000 | 判别器过强导致严重退化 |
 
-结论上，最终 DCGAN 在同一评估协议下取得最低 FID；StyleGAN-like 的 IS 更高，但 FID 未超过 DCGAN；StyleGAN2 目前作为结构实现和定性插值结果纳入报告，不参与严格数值排名。
+结论上，最终 DCGAN 在同一评估协议下取得最低 FID；StyleGAN-like 的 IS 更高，但 FID 未超过 DCGAN；StyleGAN2 结构更接近原版核心设计，但在当前 64x64、50 epoch 和轻量通道配置下，FID/IS 仍未超过最佳 DCGAN。
 
 ## 项目结构
 
@@ -148,7 +148,7 @@ scripts/interpolate_stylegan2.py               StyleGAN2 W 空间插值
 - DCGAN 长训分析：最佳配置继续训练到 400 epoch 后 FID 上升、多样性下降，说明存在生成分布退化。
 - 缓解实验：one-sided label smoothing 与 instance noise 在 80/160 epoch 明显改善结果，但不能彻底阻止后期退化。
 - StyleGAN-like：实现 mapping network、learned constant、AdaIN、noise injection、R1 regularization 和 EMA。
-- StyleGAN2：实现 modulated convolution、demodulation、style mixing、path length regularization、R1 regularization 和 EMA，并完成 W 空间插值验证。
+- StyleGAN2：实现 modulated convolution、demodulation、style mixing、path length regularization、R1 regularization 和 EMA，并完成 W 空间插值与 4096 张图像 FID/IS 评估。
 - 强制模式崩溃：通过削弱生成器、增强判别器和增加判别器更新步数，展示训练失衡导致的严重退化。
 
 ## 评估指标

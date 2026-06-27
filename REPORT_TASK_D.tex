@@ -3,6 +3,7 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{amsmath}
+\usepackage{amssymb}
 \usepackage{float}
 \usepackage{subcaption}
 \usepackage{hyperref}
@@ -18,19 +19,28 @@
 \setlist[enumerate]{leftmargin=2em}
 
 \title{基于 GAN 的人脸图像生成实验报告}
-\author{AI2602 深度学习课程项目 · 任务 D}
+\author{林子淳 524030910206 肖牧子 524030910212}
 \date{\today}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-本项目围绕任务 D ``基于 GAN 的人头图像生成'' 展开，目标是在 CelebA 人脸数据集上实现人脸图像生成，并使用 FID 与 Inception Score 对生成质量进行评估。本文首先实现并系统调参了基础 DCGAN 模型，在最佳配置下取得 FID 16.39 的结果；随后在最佳 DCGAN 上进行长时间训练实验，观察到 FID 上升与多样性下降，说明模型存在轻度模式崩溃倾向，并进一步使用 label smoothing 与 instance noise 进行缓解对比。作为改进模型，本文实现了轻量版 StyleGAN-like 结构，引入 mapping network、AdaIN、noise injection 与 R1 regularization，并与 DCGAN 进行对比。最后，本文构造了强制模式崩溃实验，通过破坏生成器与判别器的训练平衡，直观展示 GAN 训练失衡时的生成退化现象。
+  本项目围绕任务 D ``基于 GAN 的人头图像生成'' 展开，旨在基于 CelebA 人脸数据集实现人脸图像生成，并使用 FID
+  与 Inception Score (IS) 对生成质量进行定量评估。首先，本文实现了基础 DCGAN 模型，并通过多组超参数实验确定最
+  佳训练配置，最终在 4096 张图像评估下取得 FID 16.39 的结果。其次，本文在最佳 DCGAN 配置上进行长时间训练实
+  验，发现随着训练轮次增加，FID 上升且多样性指标下降，表明模型存在生成分布退化与轻度模式崩溃倾向；针对该问
+  题，本文进一步引入 label smoothing 与 instance noise 进行缓解对比。改进模型方面，本文实现了轻量版 StyleGAN-
+  like 结构，引入 mapping network、AdaIN、noise injection 与 R1 regularization，并与 DCGAN 进行对比分析；同
+  时，本文还实现了面向 $64\times64$ 人脸生成的 StyleGAN2 核心结构，包括 modulated convolution、demodulation、
+  style mixing、path length regularization 与 EMA 生成器，并在 4096 张图像评估下取得 FID 24.93 的结果。最
+  后，本文设计了强制模式崩溃实验，通过破坏生成器与判别器的训练平衡，直观展示 GAN 训练失衡所导致的生成退化现
+  象。
 \end{abstract}
 
 \section{引言}
 
-生成对抗网络（Generative Adversarial Network, GAN）是一类重要的生成模型。它通过生成器（Generator）与判别器（Discriminator）之间的对抗训练，使生成器逐渐学习真实数据分布，从而生成具有真实感的样本。在图像生成任务中，GAN 已经发展出 DCGAN、StyleGAN、CycleGAN 等多种经典结构，其中 DCGAN 是卷积 GAN 的基础代表，StyleGAN 则通过风格控制机制显著提升了高分辨率人脸生成质量。
+生成对抗网络（Generative Adversarial Network, GAN）是一类重要的生成模型。它通过生成器（Generator）与判别器（Discriminator）之间的对抗训练，使生成器逐渐学习真实数据分布，从而生成具有真实感的样本。在图像生成任务中，GAN 已经发展出 DCGAN、StyleGAN、CycleGAN 等多种经典结构，其中 DCGAN 是卷积 GAN 的基础代表，StyleGAN 则通过风格控制机制显著提升了人脸生成质量。
 
 本项目选择任务 D，即基于 GAN 的人脸图像生成。根据任务要求，基础部分需要实现一个 GAN 模型，完成人脸图像生成、潜变量插值实验，并使用 FID 或 IS 进行评估；Bonus 部分要求对比改进 GAN 模型，并探索 GAN 训练中的模式崩溃问题。本文工作包括：
 
@@ -40,6 +50,7 @@
     \item 基于最佳 DCGAN 进行长时间训练，观察自然退化与轻度模式崩溃倾向；
     \item 使用 one-sided label smoothing 与 instance noise 对模式崩溃倾向进行缓解对比；
     \item 实现轻量版 StyleGAN-like 模型，并与基础 DCGAN 进行性能比较；
+    \item 实现面向 $64\times64$ 图像的 StyleGAN2 核心模型，并进行训练、插值与 FID/IS 评估；
     \item 构造强制模式崩溃实验，直观展示 GAN 训练失衡时的退化现象。
 \end{itemize}
 
@@ -407,15 +418,95 @@ StyleGAN-like & 100 & 4096 & 23.114 & 2.400 \\
 
 从 FID 看，轻量版 StyleGAN-like 未超过最终 DCGAN；但从 IS 看，StyleGAN-like 更高，说明其生成样本在 Inception 分类分布上具有更高多样性。考虑到本文实现的是轻量版本，且未采用完整 StyleGAN 的训练策略和更大模型规模，该结果是合理的。StyleGAN-like 的价值主要体现在结构改进和风格控制机制上，而不是在当前资源约束下必然超过 DCGAN。
 
-\section{StyleGAN2 实验预留}
+\section{StyleGAN2 实现与实验结果}
 
-本节预留给 StyleGAN2 实现部分。后续可补充以下内容：
+\subsection{模型结构}
+
+在轻量版 StyleGAN-like 的基础上，本文进一步实现了面向 $64\times64$ 人脸生成的 StyleGAN2 核心结构。与前一节的 AdaIN 风格调制不同，StyleGAN2 将风格控制直接并入卷积权重，使用 modulated convolution 和 demodulation 完成逐样本卷积核调制，从而减少 AdaIN 带来的特征统计约束。生成器仍然先通过 mapping network 将输入噪声 $z$ 映射到中间风格空间 $w$，但后续各分辨率层不再使用显式 AdaIN，而是在每个卷积层中由 $w$ 生成调制系数。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{report_images/arch_of_stylegan2.png}
+    \caption{StyleGAN2 架构。}
+    \label{fig:stylegan2-arch}
+\end{figure}
+
+本文的 StyleGAN2 生成器包含以下模块：
 \begin{itemize}
-    \item StyleGAN2 相比 StyleGAN 的结构改进；
-    \item 实现细节与训练设置；
-    \item 生成样本、插值结果与 FID/IS；
-    \item 与 DCGAN、StyleGAN-like 的对比分析。
+    \item \textbf{Mapping network}：由 PixelNorm 和 4 层 equalized linear 构成，将 128 维噪声映射为 128 维风格向量；
+    \item \textbf{Learned constant}：以可学习的 $4\times4$ 常量张量作为生成起点，而不是直接从全连接层 reshape；
+    \item \textbf{Modulated convolution}：每层卷积权重由风格向量逐样本调制，并通过 demodulation 归一化不同输出通道的尺度；
+    \item \textbf{Noise injection}：在每个卷积层加入逐像素随机噪声，用于建模局部随机细节；
+    \item \textbf{Skip ToRGB}：每个分辨率阶段输出 RGB 图像，并与上一阶段上采样结果相加，最终经 \texttt{Tanh} 输出到 $[-1,1]$。
 \end{itemize}
+
+生成器从 $4\times4$ 起步，依次上采样到 $8\times8$、$16\times16$、$32\times32$ 和 $64\times64$。通道数设置为 $128\rightarrow128\rightarrow64\rightarrow32\rightarrow16$，与本项目的 $64\times64$ 图像规模匹配。判别器采用残差下采样结构，从 RGB 图像映射到特征图后逐层降采样，并在最后加入 minibatch standard deviation 特征，以增强对生成样本多样性的约束。
+
+需要说明的是，本文实现的是课程项目规模的 $64\times64$ StyleGAN2 核心版本，并非官方高分辨率完整复现。该实现保留了 StyleGAN2 的主要机制，但没有使用官方实现中的 fused upsample/downsample、分辨率逐级训练和大规模算力设置。
+
+\subsection{训练设置}
+
+StyleGAN2 使用 logistic discriminator loss 和 non-saturating generator loss。为了提高训练稳定性，判别器加入 R1 gradient penalty，生成器加入 path length regularization，同时维护生成器的 EMA 版本用于采样和插值。正式训练配置如下：
+\begin{equation}
+batch\_size=64,\quad lr=2\times10^{-4},\quad \beta_1=0,\quad \beta_2=0.99.
+\end{equation}
+其他关键设置为：
+\begin{equation}
+style\_dim=128,\quad mapping\_layers=4,\quad style\_mixing\_prob=0.9,\quad ema\_decay=0.995.
+\end{equation}
+正则化参数设置为 $r1\_\gamma=10$、$r1\_every=16$、$pl\_weight=2$、$pl\_every=4$。采样时使用 EMA 生成器，并采用 truncation trick，默认 $truncation\_\psi=0.7$。
+
+\subsection{训练日志与插值结果}
+
+StyleGAN2 正式训练到 50 epoch，最终训练日志记录到 step 142425。训练末尾一步的判别器损失为 1.223，生成器损失为 0.790；最后 200 step 的平均判别器损失约为 1.306，平均生成器损失约为 0.798，真实样本 logit 与生成样本 logit 的均值分别约为 0.159 和 -0.159。该结果说明训练后期判别器仍能区分真实样本与生成样本，但二者 logit 差距没有出现极端扩大，训练没有退化为强制模式崩溃实验中的单边压制状态。
+
+\begin{table}[H]
+\centering
+\caption{StyleGAN2 训练日志末期统计}
+\label{tab:stylegan2-log}
+\begin{tabular}{lrrrrrr}
+\toprule
+Epoch & Step & $D$ loss & $G$ loss & Real logit & Fake logit & Path length \\
+\midrule
+50 & 142425 & 1.223 & 0.790 & 0.157 & -0.204 & 0.200 \\
+50 末尾 200 step 平均 & -- & 1.306 & 0.798 & 0.159 & -0.159 & 0.050 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+插值实验在 $w$ 空间中进行。具体做法是随机采样两个端点 $z_1,z_2$，经 mapping network 得到 $w_1,w_2$，再做线性插值：
+\begin{equation}
+    w(\alpha)=(1-\alpha)w_1+\alpha w_2,\quad \alpha\in[0,1].
+\end{equation}
+为了更清楚观察风格空间的连续性，插值实验固定每层 noise，并使用较近的端点距离。结果如图~\ref{fig:stylegan2-interp} 所示。可以看到相邻样本之间没有突变，说明 mapping network 和 modulated convolution 形成的 $w$ 空间具有一定连续性。
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.96\textwidth]{report_images/interpolation_balanced_seed202_scale0.55.png}
+    \caption{StyleGAN2 在 $w$ 空间中的潜变量插值结果。插值过程使用 EMA 生成器，并固定逐层噪声以突出风格空间变化。}
+    \label{fig:stylegan2-interp}
+\end{figure}
+
+\subsection{FID/IS 评估与结果分析}
+
+本文进一步使用与前文一致的 Inception v3 特征评估流程，对 StyleGAN2 的 EMA 生成器进行定量评估。评估时采样 4096 张真实 CelebA 图像和 4096 张生成图像，生成端使用 $truncation\_\psi=0.7$。FID 直接调用项目中的 \texttt{calculate\_fid(real\_features, fake\_features)}，即在 Inception v3 的 2048 维池化特征空间中分别估计真实图像和生成图像的均值与协方差，再计算两个高斯分布之间的 Fr\'{e}chet distance。结果如表~\ref{tab:stylegan2-eval} 所示。
+
+\begin{table}[H]
+\centering
+\caption{StyleGAN2 4096 张图像评估结果}
+\label{tab:stylegan2-eval}
+\begin{tabular}{lrrrrr}
+\toprule
+模型 & Epoch & Eval Images & FID$\downarrow$ & IS$\uparrow$ & IS Std \\
+\midrule
+StyleGAN2 & 50 & 4096 & 24.926 & 1.845 & 0.040 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+与 DCGAN 相比，StyleGAN2 的优势不在于简单堆叠更深的卷积层，而在于将图像生成拆分为风格控制、随机细节和逐分辨率合成三个部分。DCGAN 的潜变量只在输入端起作用，后续生成过程主要依赖卷积转置网络自行展开；StyleGAN2 则让每一层都直接接收风格向量，因此更适合控制不同尺度的人脸属性。与轻量版 StyleGAN-like 相比，StyleGAN2 去除了 AdaIN，改用权重调制与 demodulation，结构上更接近原版 StyleGAN2 的核心设计。
+
+从定量结果看，StyleGAN2 的 FID 为 24.93，略高于 StyleGAN-like 的 23.11，也高于最佳 DCGAN 的 16.39；IS 为 1.84，低于 StyleGAN-like 和 DCGAN。该结果说明，在当前 $64\times64$ 训练规模、50 epoch 训练轮次和轻量通道配置下，完整的风格调制机制并没有直接转化为更优 FID/IS。其原因可能包括模型更复杂、训练步数相对不足，以及 path length regularization、style mixing 和 truncation 等策略对小分辨率课程项目设置不一定最优。因而本文将 StyleGAN2 视为结构完整性更强的改进实现，而不是当前实验设置下的最优指标模型。
 
 \section{强制模式崩溃实验}
 
@@ -468,6 +559,7 @@ DCGAN 长训无缓解 & 400 & 2048 & 31.052 & 2.241 & 出现轻度退化趋势 \
 DCGAN 缓解组 & 160 & 2048 & 15.589 & 2.303 & 早期缓解有效 \\
 DCGAN 缓解组 & 400 & 2048 & 32.030 & 2.206 & 后期仍退化 \\
 StyleGAN-like & 100 & 4096 & 23.114 & 2.400 & 改进结构，FID 未超过 DCGAN \\
+StyleGAN2 & 50 & 4096 & 24.926 & 1.845 & 核心结构实现，FID 未超过 DCGAN \\
 强制模式崩溃 & 10 & 2048 & 336.690 & 1.000 & 严重训练崩溃 \\
 \bottomrule
 \end{tabular}}
@@ -481,20 +573,21 @@ StyleGAN-like & 100 & 4096 & 23.114 & 2.400 & 改进结构，FID 未超过 DCGAN
 
 第三，label smoothing 与 instance noise 能够显著改善早期长训表现，但在更长训练后仍无法完全阻止退化。这表明简单稳定化技巧可以延缓模式崩溃倾向，但不能根本解决 GAN 训练不稳定问题。
 
-第四，StyleGAN-like 引入了风格映射、AdaIN 和噪声注入等机制，在结构上比 DCGAN 更灵活；但由于本文采用轻量实现，且未完整复现原版 StyleGAN 的训练策略，其 FID 未超过 DCGAN。该结果说明复杂模型并不必然在有限训练资源下获得更优指标。
+第四，StyleGAN-like 引入了风格映射、AdaIN 和噪声注入等机制，在结构上比 DCGAN 更灵活；StyleGAN2 进一步使用 modulated convolution、demodulation、style mixing、R1 正则化、path length regularization 和 EMA 生成器，结构完整性更强。但在当前实验设置下，StyleGAN-like 和 StyleGAN2 的 FID 均未超过最佳 DCGAN，说明复杂结构需要更充分的训练规模、参数配置和稳定化策略才能体现优势。
 
 第五，强制模式崩溃实验直观展示了训练失衡的后果。当判别器过强、生成器过弱时，生成图像迅速退化，FID 极高、IS 接近 1。
 
 \section{总结}
 
-本文完成了任务 D 的基础要求与 Bonus 探索。基础部分实现了 DCGAN 人脸生成系统，完成了调参、最终训练、潜变量插值与 FID/IS 评估。Bonus 部分实现了轻量版 StyleGAN-like 改进模型，并探索了 GAN 训练中的模式崩溃问题：一方面在最佳 DCGAN 长训中观察到轻度分布退化，另一方面通过强制模式崩溃实验展示了严重训练失衡现象。同时，本文尝试使用 label smoothing 与 instance noise 缓解长训退化，结果表明该方法能够改善早期训练稳定性，但无法彻底解决长时间训练下的退化问题。
+本文完成了任务 D 的基础要求与 Bonus 探索。基础部分实现了 DCGAN 人脸生成系统，完成了调参、最终训练、潜变量插值与 FID/IS 评估。Bonus 部分实现了轻量版 StyleGAN-like 改进模型，并进一步实现了 StyleGAN2 的核心结构，包括 mapping network、modulated convolution、demodulation、style mixing、R1 正则化、path length regularization 和 EMA 生成器，同时完成了 StyleGAN2 的插值实验和 FID/IS 评估。本文还探索了 GAN 训练中的模式崩溃问题：一方面在最佳 DCGAN 长训中观察到轻度分布退化，另一方面通过强制模式崩溃实验展示了严重训练失衡现象。
 
-总体而言，本项目展示了从基础 GAN 实现、系统调参、改进模型对比到训练稳定性分析的完整实验流程。后续工作可以进一步接入完整 StyleGAN2、使用更高分辨率图像、更大模型和更稳定的正则化策略，以进一步提升人脸生成质量。
+总体而言，本项目展示了从基础 GAN 实现、系统调参、改进模型对比到训练稳定性分析的完整实验流程。后续工作可以进一步尝试更高分辨率图像、更大模型、更长训练和更系统的 StyleGAN2 超参数搜索，以提升人脸生成质量并更充分发挥风格调制结构的优势。
 
 \begin{thebibliography}{9}
 \bibitem{gan} Goodfellow, I. et al. Generative Adversarial Nets. NeurIPS, 2014.
 \bibitem{dcgan} Radford, A., Metz, L., and Chintala, S. Unsupervised Representation Learning with Deep Convolutional Generative Adversarial Networks. ICLR, 2016.
 \bibitem{stylegan} Karras, T. et al. A Style-Based Generator Architecture for Generative Adversarial Networks. CVPR, 2019.
+\bibitem{stylegan2} Karras, T. et al. Analyzing and Improving the Image Quality of StyleGAN. CVPR, 2020.
 \bibitem{cyclegan} Zhu, J.-Y. et al. Unpaired Image-to-Image Translation using Cycle-Consistent Adversarial Networks. ICCV, 2017.
 \end{thebibliography}
 
